@@ -207,12 +207,20 @@ class ModelEngine:
     
     def _get_top_features(self, n: int = 10) -> list:
         """
-        Get top N most important features.
+        Get top N most important features with names.
         """
         if self.feature_importance is None:
             return []
         
-        # This would need feature names from the data engine
-        # For now, return indices
+        # Get top feature indices
         top_indices = np.argsort(self.feature_importance)[-n:][::-1]
-        return top_indices.tolist()
+        
+        # Return feature names if available, otherwise indices
+        if hasattr(self, 'feature_names') and self.feature_names:
+            return [self.feature_names[i] for i in top_indices]
+        else:
+            return top_indices.tolist()
+    
+    def set_feature_names(self, feature_names: list):
+        """Set feature names for better interpretability."""
+        self.feature_names = feature_names

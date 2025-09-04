@@ -9,6 +9,9 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.model_selection import train_test_split
 from typing import Tuple, Dict, Any
 import logging
+import sklearn
+import joblib
+import warnings
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +25,13 @@ class DataEngine:
         self.encoders: Dict[str, LabelEncoder] = {}
         self.scaler = StandardScaler()
         self.feature_names: list = []
+        # Version tracking for reproducibility
+        self.metadata = {
+            'sklearn_version': sklearn.__version__,
+            'pandas_version': pd.__version__,
+            'numpy_version': np.__version__,
+            'created_at': pd.Timestamp.now().isoformat()
+        }
     
     def create_impact_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -148,5 +158,25 @@ class DataEngine:
         return {
             'feature_names': self.feature_names,
             'categorical_encoders': list(self.encoders.keys()),
-            'scaler_fitted': hasattr(self.scaler, 'scale_')
+            'scaler_fitted': hasattr(self.scaler, 'scale_'),
+            'metadata': self.metadata
         }
+    
+    def validate_versions(self):
+        """Validate that current library versions match training versions."""
+        current_versions = {
+            'sklearn_version': sklearn.__version__,
+            'pandas_version': pd.__version__,
+            'numpy_version': np.__version__
+        }
+        
+        version_mismatches = []
+        for lib, current_ver in current_versions.items():
+            if lib in self.metadata and current_ver != self.metadata[lib]:
+                version_mismatches.append(f"{lib}: {self.metadata[lib]} -> {current_ver}")
+        
+        if version_mismatches:
+            warnings.warn(f"Version mismatches detected: {version_mismatches}")
+            logger.warning(f"Version mismatches: {version_mismatches}")
+        
+        return len(version_mismatches) == 0

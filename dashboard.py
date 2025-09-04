@@ -12,6 +12,8 @@ import numpy as np
 import time
 from typing import Dict, Any, Optional
 import logging
+import hashlib
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -27,6 +29,32 @@ st.set_page_config(
 
 # API configuration
 API_URL = "http://localhost:8000"
+
+# Authentication configuration
+DEFAULT_USERNAME = "admin"
+DEFAULT_PASSWORD = "churn2024"  # In production, use environment variables
+
+def check_password():
+    """Simple password check for dashboard access."""
+    def password_entered():
+        """Checks whether a password entered by the user is correct."""
+        if st.session_state["password"] == DEFAULT_PASSWORD:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # Don't store password
+        else:
+            st.session_state["password_correct"] = False
+
+    # Return True if the password is validated successfully.
+    if st.session_state.get("password_correct", False):
+        return True
+
+    # Show input for password.
+    st.text_input(
+        "🔐 Dashboard Access", type="password", on_change=password_entered, key="password"
+    )
+    if "password_correct" in st.session_state:
+        st.error("😕 Password incorrect")
+    return False
 
 class ChurnDashboard:
     """High-performance churn prediction dashboard."""
@@ -45,7 +73,7 @@ class ChurnDashboard:
             return False
     
     def predict_customer(self, customer_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Call prediction API with error handling."""
+        """Call prediction API with comprehensive error handling."""
         try:
             response = self.session.post(
                 f"{self.api_url}/predict",
@@ -54,9 +82,25 @@ class ChurnDashboard:
             )
             response.raise_for_status()
             return response.json()
+        except requests.exceptions.ConnectionError:
+            logger.error("API Connection Error: Cannot connect to prediction service")
+            return {"error": "connection", "message": "Cannot connect to prediction service. Please check if the API is running."}
+        except requests.exceptions.Timeout:
+            logger.error("API Timeout Error: Request timed out")
+            return {"error": "timeout", "message": "Request timed out. Please try again."}
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 422:
+                logger.error("API Validation Error: Invalid input data")
+                return {"error": "validation", "message": "Invalid customer data. Please check all field values."}
+            elif e.response.status_code == 503:
+                logger.error("API Service Error: Model not loaded")
+                return {"error": "service", "message": "Prediction service is not ready. Please try again later."}
+            else:
+                logger.error(f"API HTTP Error: {e}")
+                return {"error": "http", "message": f"Server error: {e.response.status_code}"}
         except Exception as e:
-            logger.error(f"API Error: {e}")
-            return None
+            logger.error(f"Unexpected API Error: {e}")
+            return {"error": "unexpected", "message": "An unexpected error occurred. Please try again."}
     
     def get_model_info(self) -> Optional[Dict[str, Any]]:
         """Get model information."""
@@ -378,7 +422,12 @@ class ChurnDashboard:
                 st.plotly_chart(fig, use_container_width=True)
 
 def main():
-    """Main function to run the dashboard."""
+    """Main function to run the dashboard with authentication."""
+    # Check authentication first
+    if not check_password():
+        st.stop()
+    
+    # Show dashboard if authenticated
     dashboard = ChurnDashboard()
     dashboard.run()
 

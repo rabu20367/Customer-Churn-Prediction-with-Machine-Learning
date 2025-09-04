@@ -75,6 +75,9 @@ def train_model():
     logger.info("🎯 Training final model...")
     model_engine.train_final_model(X_train, y_train)
     
+    # Set feature names for better interpretability
+    model_engine.set_feature_names(data_engine.feature_names)
+    
     # 4. Evaluate model
     logger.info("📈 Evaluating model performance...")
     evaluation_results = model_engine.evaluate_model(X_test, y_test)

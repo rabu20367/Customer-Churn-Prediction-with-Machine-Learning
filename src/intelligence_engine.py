@@ -92,13 +92,14 @@ class IntelligenceEngine:
         if not self.groq_client:
             return self._generate_fallback_explanation(prediction, critical_factors)
         
-        # Prepare context
+        # Prepare context with sanitized input
         context = self._prepare_business_context(customer_data, prediction, critical_factors)
+        sanitized_context = self._sanitize_llm_input(context)
         
         prompt = f"""
         Customer churn analysis for business stakeholders:
         
-        {context}
+        {sanitized_context}
         
         Generate a concise business explanation (2-3 sentences) that:
         1. States the churn risk level clearly
@@ -196,9 +197,9 @@ class IntelligenceEngine:
         Generate complete business insight in optimized single flow.
         Minimizes API calls while maximizing information value.
         """
-        # Get SHAP values
+        # Get SHAP values using proper DataEngine transformation
         customer_df = pd.DataFrame([customer_data])
-        X_processed = self.scaler.transform(customer_df)
+        X_processed = self.data_engine.transform_for_inference(customer_df)
         
         critical_factors = []
         if self.explainer:
@@ -240,6 +241,38 @@ class IntelligenceEngine:
             context_parts.append(f"- {factor['feature']}: {factor['direction']} churn risk")
         
         return "\n".join(context_parts)
+    
+    def _sanitize_llm_input(self, text: str) -> str:
+        """Sanitize input for LLM to prevent prompt injection."""
+        if not text:
+            return ""
+        
+        # Remove potential prompt injection patterns
+        dangerous_patterns = [
+            "ignore previous instructions",
+            "system prompt",
+            "assistant:",
+            "user:",
+            "```",
+            "---",
+            "###",
+            "##",
+            "#"
+        ]
+        
+        sanitized = text
+        for pattern in dangerous_patterns:
+            sanitized = sanitized.replace(pattern, "")
+        
+        # Limit length to prevent abuse
+        max_length = 1000
+        if len(sanitized) > max_length:
+            sanitized = sanitized[:max_length] + "..."
+        
+        # Remove any remaining special characters that could be problematic
+        sanitized = sanitized.replace("\n", " ").replace("\r", " ")
+        
+        return sanitized.strip()
     
     def _generate_fallback_explanation(self, prediction: float, 
                                      critical_factors: List[Dict[str, Any]]) -> str:

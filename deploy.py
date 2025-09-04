@@ -7,6 +7,8 @@ import sys
 import os
 import time
 import logging
+import json
+import traceback
 from pathlib import Path
 try:
     import requests
@@ -162,44 +164,113 @@ class DeploymentManager:
         return True
     
     def cleanup(self):
-        """Clean up processes on exit."""
-        logger.info("🧹 Cleaning up processes...")
+        """Clean up processes and artifacts on exit."""
+        logger.info("🧹 Cleaning up processes and artifacts...")
         
+        # Terminate processes
         if self.api_process:
-            self.api_process.terminate()
-            self.api_process.wait()
+            try:
+                self.api_process.terminate()
+                self.api_process.wait(timeout=5)
+                logger.info("✅ API process terminated")
+            except subprocess.TimeoutExpired:
+                logger.warning("⚠️ API process did not terminate gracefully, forcing kill")
+                self.api_process.kill()
+            except Exception as e:
+                logger.error(f"Error terminating API process: {e}")
         
         if self.dashboard_process:
-            self.dashboard_process.terminate()
-            self.dashboard_process.wait()
+            try:
+                self.dashboard_process.terminate()
+                self.dashboard_process.wait(timeout=5)
+                logger.info("✅ Dashboard process terminated")
+            except subprocess.TimeoutExpired:
+                logger.warning("⚠️ Dashboard process did not terminate gracefully, forcing kill")
+                self.dashboard_process.kill()
+            except Exception as e:
+                logger.error(f"Error terminating dashboard process: {e}")
+        
+        # Clean up partial artifacts if deployment failed
+        self._cleanup_partial_artifacts()
+    
+    def _cleanup_partial_artifacts(self):
+        """Clean up partial artifacts from failed deployment."""
+        try:
+            # Check for partial model files
+            model_path = "models/churn_model.pkl"
+            if os.path.exists(model_path) and os.path.getsize(model_path) < 1000:  # Suspiciously small
+                logger.warning("⚠️ Removing partial model file")
+                os.remove(model_path)
+            
+            # Check for partial data engine files
+            data_engine_path = "models/data_engine.pkl"
+            if os.path.exists(data_engine_path) and os.path.getsize(data_engine_path) < 100:  # Suspiciously small
+                logger.warning("⚠️ Removing partial data engine file")
+                os.remove(data_engine_path)
+                
+        except Exception as e:
+            logger.error(f"Error during artifact cleanup: {e}")
+    
+    def _log_deployment_error(self, error: Exception, context: str):
+        """Log deployment errors with context."""
+        error_log = {
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "context": context,
+            "error_type": type(error).__name__,
+            "error_message": str(error),
+            "traceback": traceback.format_exc()
+        }
+        
+        # Log to file
+        try:
+            with open("deployment_error.log", "a") as f:
+                f.write(f"\n{'='*50}\n")
+                f.write(json.dumps(error_log, indent=2))
+                f.write(f"\n{'='*50}\n")
+        except Exception as log_error:
+            logger.error(f"Failed to write error log: {log_error}")
+        
+        logger.error(f"Deployment error in {context}: {error}")
     
     def deploy(self):
-        """Complete deployment process."""
+        """Complete deployment process with comprehensive error handling."""
         logger.info("🚀 Starting deployment...")
         
         try:
             # 1. Check dependencies
+            logger.info("Step 1/6: Checking dependencies...")
             if not self.check_dependencies():
+                self._log_deployment_error(Exception("Dependency check failed"), "dependency_check")
                 return False
             
             # 2. Check data availability
+            logger.info("Step 2/6: Checking data availability...")
             if not self.check_data_availability():
+                self._log_deployment_error(Exception("Data not available"), "data_check")
                 return False
             
             # 3. Train model if needed
+            logger.info("Step 3/6: Training model...")
             if not self.train_model():
+                self._log_deployment_error(Exception("Model training failed"), "model_training")
                 return False
             
             # 4. Start API
+            logger.info("Step 4/6: Starting API server...")
             if not self.start_api():
+                self._log_deployment_error(Exception("API startup failed"), "api_startup")
                 return False
             
             # 5. Start dashboard
+            logger.info("Step 5/6: Starting dashboard...")
             if not self.start_dashboard():
+                self._log_deployment_error(Exception("Dashboard startup failed"), "dashboard_startup")
                 return False
             
             # 6. Check system health
+            logger.info("Step 6/6: Verifying system health...")
             if not self.check_system_health():
+                self._log_deployment_error(Exception("System health check failed"), "health_check")
                 return False
             
             # 7. Display success message
@@ -215,7 +286,7 @@ class DeploymentManager:
             self.cleanup()
             return False
         except Exception as e:
-            logger.error(f"Deployment failed: {e}")
+            self._log_deployment_error(e, "deployment_main")
             self.cleanup()
             return False
     
